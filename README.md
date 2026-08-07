@@ -179,14 +179,21 @@ bodies, ineligible customers, duplicate delivery, and a revocation round trip
 that provisions a credential for an ineligible customer and asserts the webhook
 tears both halves of it down.
 
-## Open item
+These are live calls, not mocks, so each run leaves two more inactive
+memberships on the round-trip test customer. Harmless — memberships cannot be
+deleted, only deactivated, and `scripts/audit.mjs` check 1 will show the count
+climbing on that one customer. Nothing to fix; just do not mistake it for the
+runaway-enrolment bug it superficially resembles.
 
-`VIVENU_EXTERNAL_CODE_FIELD` defaults to `_id`, but nothing confirms that the
-Apple/Google member card pass encodes the membership `_id` rather than its
-`secret`. The membership object has no barcode field, so it is one or the other.
-Pull a pass for an enrolled customer and scan it in Scan Manager before running
-this against production — if it turns out to be `secret`, every code loaded up to
-that point is wrong.
+## The access list code
+
+`VIVENU_EXTERNAL_CODE_FIELD=_id`. The membership object exposes no barcode field,
+so the code written to the access list is either the membership `_id` or its
+`secret`. **Confirmed as `_id`** — verified against a real member card pass at the
+gate, not inferred from the docs.
+
+Do not change this without re-verifying the same way. Every code written under the
+wrong setting is a credential that will not scan.
 
 ## API notes
 
