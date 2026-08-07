@@ -55,7 +55,7 @@ curl -X POST https://vivenu.dev/api/webhook \
     "name": "student-pass-enrol",
     "url": "https://stanford-student-passes.vercel.app/api/webhook",
     "events": { "customer.created": true, "customer.updated": true },
-    "hmacKey": "<same value as VIVENU_WEBHOOK_HMAC_KEY>"
+    "hmacKey": "4f109b814641b3f73e5f5c672f9f178d573941a8ddb8405d851ff50e1ee0468e"
   }'
 ```
 
