@@ -1,15 +1,36 @@
 # Stanford Student Passes — membership enrolment
 
-Enrols vivenu customers into a membership program and puts their membership code
-on an access list so it scans at the gate (Tap & Go).
-
-Three entry points, one shared implementation in `lib/enroll.js`:
+Keeps vivenu membership enrolment in sync with customer eligibility, and keeps
+the matching codes on an access list so they scan at the gate (Tap & Go).
 
 | Entry point | Trigger | Purpose |
 |---|---|---|
-| `api/webhook.js` | `customer.created` / `customer.updated` | Near-real-time enrolment |
+| `api/webhook.js` | `customer.created` / `customer.updated` | Near-real-time enrol **and revoke** |
 | `api/reconcile.js` | Vercel Cron, daily 08:00 UTC | Safety net for dropped webhooks |
 | `enrollment.js` | Manual CLI | Bulk enrolment from a CSV |
+| `scripts/audit.mjs` | Manual, read-only | Health check |
+
+## Eligibility drives membership, in both directions
+
+`syncCustomer` in `lib/enroll.js` is the single implementation:
+
+| Eligible? | Active membership? | Action | Status |
+|---|---|---|---|
+| yes | no | create membership, add code to list | `enrolled` |
+| yes | yes | ensure the code is listed | `already-enrolled` |
+| no | yes | delete code, deactivate membership | `revoked` |
+| no | no | nothing | `not-eligible` |
+
+Revocation only runs when the caller passes `allowRevoke`. The webhook and the
+nightly sweep do; the CSV CLI does not, because a file of customers to enrol
+should never silently revoke the rows that turn out to be ineligible.
+
+Losing the gating tag is a `customer.updated` event like any other. Without the
+revoke path, an ineligible customer keeps a working gate credential
+indefinitely — graduations, withdrawals, revoked eligibility. On revoke the
+access-list entry is deleted **before** the membership is deactivated: if the
+second call fails, someone who cannot scan but is still flagged as a member is a
+safer failure than someone who can still scan.
 
 ## Two platform behaviours worth knowing
 
@@ -96,12 +117,45 @@ Both endpoints are authenticated and fail closed:
 
 | Status | When | vivenu retries? |
 |---|---|---|
-| 200 | Enrolled, already enrolled, ineligible, or an event we ignore | No |
+| 200 | Enrolled, already enrolled, revoked, ineligible, or an event we ignore | No |
 | 401 | Bad or missing signature | No |
-| 500 | Enrolment failed against the vivenu API | Yes, 6 times over ~2h |
+| 500 | The call against the vivenu API failed | Yes, 6 times over ~2h |
 
 Ineligible customers return 200 deliberately — that is a correct outcome, not a
 failure, and retrying will not change it.
+
+## Reconcile
+
+Three passes:
+
+1. Enrol every tagged customer that is not already enrolled.
+2. Revoke every active membership whose customer no longer holds the tag. Driven
+   from the membership side, because a customer who lost the tag no longer
+   appears in the pass 1 query at all — nothing else would ever look at them.
+3. Delete access-list codes whose membership is no longer active.
+
+A missed enrolment is an inconvenience; a missed revocation leaves a working
+credential with someone ineligible, so pass 2 matters more than pass 1.
+
+```
+GET /api/reconcile?dryRun=1
+Authorization: Bearer $CRON_SECRET
+```
+
+`dryRun` performs every read and no writes. It reports only genuine changes —
+customers already in the right state come back as `already-enrolled`, not as
+pending work.
+
+## Audit
+
+```bash
+node --env-file=.env scripts/audit.mjs
+```
+
+Read-only. Six checks, all of them things that otherwise fail silently: customers
+accumulating memberships, more than one active membership per customer, codes
+whose membership is inactive, codes for customers without the tag, tagged
+customers with no membership, and active memberships missing from the list.
 
 ## CLI
 
@@ -121,7 +175,9 @@ npm test
 ```
 
 Runs the handlers against the `dev` environment — signature rejection, tampered
-bodies, ineligible customers, and duplicate delivery.
+bodies, ineligible customers, duplicate delivery, and a revocation round trip
+that provisions a credential for an ineligible customer and asserts the webhook
+tears both halves of it down.
 
 ## Open item
 

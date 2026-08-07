@@ -13,6 +13,13 @@ import assert from 'node:assert';
 import { Readable } from 'node:stream';
 import webhook from '../api/webhook.js';
 import reconcile from '../api/reconcile.js';
+import {
+  createMembership,
+  findActiveMembership,
+  createAccessListEntry,
+  findAccessListEntry,
+  externalCodeFor,
+} from '../lib/vivenu.js';
 
 const HMAC_KEY = process.env.VIVENU_WEBHOOK_HMAC_KEY;
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -62,18 +69,20 @@ function nodeRes() {
 // Calls a handler and normalises the outcome to { status, json }, failing
 // loudly if a Node-mode invocation never wrote a response — the exact bug that
 // caused the 408s.
-async function call(handler, mode, { method = 'POST', headers = {}, body = '' }) {
+async function call(handler, mode, { method = 'POST', headers = {}, body = '', path = '/x' }) {
   if (mode === 'web') {
     const init = { method, headers };
     if (method !== 'GET' && method !== 'HEAD') init.body = body;
-    const res = await handler(new Request('https://example.com/x', init));
+    const res = await handler(new Request(`https://example.com${path}`, init));
     assert.ok(res instanceof Response, 'web mode must return a Response');
     const text = await res.text();
     return { status: res.status, json: text ? JSON.parse(text) : null };
   }
 
   const res = nodeRes();
-  await handler(nodeReq({ method, headers, body }), res);
+  const req = nodeReq({ method, headers, body });
+  req.url = path; // Node hands the handler a path, not an absolute URL
+  await handler(req, res);
   assert.ok(res.done, 'node mode never called res.end() — the request would hang');
   return { status: res.statusCode, json: res.body ? JSON.parse(res.body) : null };
 }
@@ -155,6 +164,23 @@ for (const mode of ['web', 'node']) {
     assert.strictEqual(r.status, 400);
   });
 
+  // Round trip: give an ineligible customer a live credential the way a lost
+  // tag leaves one behind, then assert the webhook takes it away. Self-contained
+  // so it stays valid on repeat runs.
+  await check(`[${mode}] revokes an ineligible customer who still holds a membership`, async () => {
+    const membership = await createMembership(INELIGIBLE);
+    const code = externalCodeFor(membership);
+    await createAccessListEntry({ externalCode: code, customerId: INELIGIBLE });
+    assert.ok(await findAccessListEntry(code), 'setup: entry should exist');
+
+    const r = await postWebhook(mode, event('customer.updated', INELIGIBLE));
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.json.status, 'revoked', `got ${r.json.status}`);
+
+    assert.strictEqual(await findActiveMembership(INELIGIBLE), null, 'membership should be inactive');
+    assert.strictEqual(await findAccessListEntry(code), null, 'access list entry should be gone');
+  });
+
   console.log('reconcile');
 
   await check(`[${mode}] rejects an unauthenticated call`, async () => {
@@ -167,13 +193,15 @@ for (const mode of ['web', 'node']) {
     assert.strictEqual(r.status, 401);
   });
 
-  await check(`[${mode}] accepts the cron secret`, async () => {
+  await check(`[${mode}] accepts the cron secret (dry run)`, async () => {
     const r = await call(reconcile, mode, {
       method: 'GET',
+      path: '/api/reconcile?dryRun=1',
       headers: { authorization: `Bearer ${CRON_SECRET}` },
     });
     assert.strictEqual(r.status, 200, JSON.stringify(r.json));
-    assert.ok(typeof r.json.scanned === 'number');
+    assert.strictEqual(r.json.dryRun, true, 'dryRun flag should be parsed from the query string');
+    assert.ok(typeof r.json.scannedTagged === 'number');
   });
 }
 

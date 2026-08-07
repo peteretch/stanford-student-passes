@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { assertConfigured } from '../lib/vivenu.js';
-import { enrollCustomer } from '../lib/enroll.js';
+import { syncCustomer } from '../lib/enroll.js';
 import { adapt } from '../lib/http.js';
 
 // Keeps the raw body intact for HMAC verification under the Node runtime.
@@ -69,9 +69,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    // enrollCustomer is idempotent, which is also what makes at-least-once
-    // delivery safe — no separate dedupe store on the event id is needed.
-    const result = await enrollCustomer(customerId, { log: (m) => console.log(m.trim()) });
+    // allowRevoke: losing the gating tag is a customer.updated event too, and
+    // it must take the credential away, not just decline to grant one.
+    //
+    // syncCustomer is idempotent in both directions, which is also what makes
+    // at-least-once delivery safe — no separate dedupe store on the event id.
+    const result = await syncCustomer(customerId, {
+      log: (m) => console.log(m.trim()),
+      allowRevoke: true,
+    });
     console.log(`${type} ${customerId} -> ${result.status}`);
     return http.send(200, { ...result, event: payload.id, type });
   } catch (err) {
