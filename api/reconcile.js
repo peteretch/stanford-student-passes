@@ -1,8 +1,6 @@
 import { assertConfigured, config, listCustomersByTag } from '../lib/vivenu.js';
 import { enrollCustomer } from '../lib/enroll.js';
-
-const json = (status, body) =>
-  new Response(JSON.stringify(body, null, 2), { status, headers: { 'Content-Type': 'application/json' } });
+import { adapt } from '../lib/http.js';
 
 const PAGE_SIZE = 1000;
 
@@ -18,23 +16,25 @@ const PAGE_SIZE = 1000;
  * No cursor is kept: the tag-filtered population is small and a full sweep is
  * more robust than a timestamp window, which can miss records if a run fails.
  */
-export default async function handler(request) {
+export default async function handler(req, res) {
+  const http = adapt(req, res);
+
   try {
     assertConfigured();
   } catch (err) {
-    return json(500, { error: err.message });
+    return http.send(500, { error: err.message });
   }
 
   // Vercel Cron sends `Authorization: Bearer $CRON_SECRET`. Without this the
   // endpoint is world-callable.
   const secret = process.env.CRON_SECRET;
-  if (!secret) return json(500, { error: 'CRON_SECRET is not configured' });
-  if (request.headers.get('authorization') !== `Bearer ${secret}`) {
-    return json(401, { error: 'Unauthorized' });
+  if (!secret) return http.send(500, { error: 'CRON_SECRET is not configured' });
+  if (http.header('authorization') !== `Bearer ${secret}`) {
+    return http.send(401, { error: 'Unauthorized' });
   }
 
   if (!config.requiredTags.length) {
-    return json(500, { error: 'VIVENU_REQUIRED_TAGS is empty — refusing to sweep every customer' });
+    return http.send(500, { error: 'VIVENU_REQUIRED_TAGS is empty — refusing to sweep every customer' });
   }
 
   // The first required tag drives the query; any others are re-checked
@@ -74,5 +74,5 @@ export default async function handler(request) {
 
   // Non-2xx on failures so it surfaces in Vercel's cron log instead of
   // looking like a clean run.
-  return json(counts.failed ? 500 : 200, summary);
+  return http.send(counts.failed ? 500 : 200, summary);
 }

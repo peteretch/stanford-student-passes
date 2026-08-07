@@ -62,14 +62,34 @@ curl -X POST https://vivenu.dev/api/webhook \
 The endpoint must be public HTTPS — vivenu rejects internal and development
 hostnames, so localhost and tunnels to a laptop will not register.
 
+## Handler calling convention
+
+Vercel's Node runtime may invoke a function as a Node handler `(req, res)` or as
+a Web handler `(Request) -> Response`, depending on runtime version and project
+settings. `lib/http.js` detects which at runtime and adapts, so the same code
+works either way.
+
+This is not a hypothetical. The first deployment used the Web signature only,
+and Vercel invoked it as Node:
+
+- `/api/reconcile` threw `TypeError: request.headers.get is not a function` —
+  Node's `headers` is a plain object — surfacing as `FUNCTION_INVOCATION_FAILED`.
+- `/api/webhook` returned a `Response` that nobody sent. `res.end()` was never
+  called, so requests hung until vivenu's 10-second timeout returned **408**.
+
+The second failure is the dangerous one: a hang looks like a network problem, not
+a code bug. `test/handlers.test.mjs` runs every test under both conventions, and
+the Node-mode shim asserts `res.end()` was actually called.
+
 ## Security
 
 Both endpoints are authenticated and fail closed:
 
 - `/api/webhook` verifies `x-vivenu-signature`, an HMAC-SHA256 of the raw body.
-  A missing key is a 500, not a bypass. The handler uses the Web request
-  signature specifically so the raw bytes are available — re-serialising a parsed
-  body produces different bytes and breaks verification.
+  A missing key is a 500, not a bypass. `config.api.bodyParser = false` keeps the
+  raw bytes intact — re-serialising a parsed body produces different bytes and
+  would never match. If some runtime parses it anyway, verification fails loudly
+  rather than checking reconstructed bytes.
 - `/api/reconcile` requires `Authorization: Bearer $CRON_SECRET`.
 
 ## Status codes the webhook returns
