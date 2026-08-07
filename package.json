@@ -1,0 +1,21 @@
+{
+  "type": "module",
+  "name": "stanford-student-passes",
+  "version": "1.0.0",
+  "description": "Enrols vivenu customers into a membership program and adds their membership code to an access list",
+  "main": "enrollment.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "enroll": "node --env-file=.env enrollment.js",
+    "enroll:dry": "node --env-file=.env enrollment.js --dry-run",
+    "test": "node --env-file=.env test/handlers.test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "csv-parse": "^6.2.1"
+  }
+}

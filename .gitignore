@@ -1,0 +1,10 @@
+.env
+.env.local
+node_modules/
+results.csv
+.vercel
+.claude/
+.DS_Store
+
+# Operational input — real customer ids, varies per run
+customers.csv
