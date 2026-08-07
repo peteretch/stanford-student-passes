@@ -53,7 +53,7 @@ curl -X POST https://vivenu.dev/api/webhook \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "student-pass-enrol",
-    "url": "https://<your-deployment>.vercel.app/api/webhook",
+    "url": "https://stanford-student-passes.vercel.app/api/webhook",
     "events": { "customer.created": true, "customer.updated": true },
     "hmacKey": "<same value as VIVENU_WEBHOOK_HMAC_KEY>"
   }'
